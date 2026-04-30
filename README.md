@@ -25,17 +25,16 @@ ccdd/
 ├── env-config.js             # 环境变量配置管理（统一环境变量）
 ├── feishu-notify.js          # 飞书通知模块
 ├── telegram-notify.js        # Telegram通知模块（支持代理）
+├── notify-sound.js           # 声音提醒模块
 ├── setup-wizard.js           # 一键配置向导
-├── .env                     # 环境变量配置（包含敏感信息，已git忽略）
-├── .env.example            # 环境变量模板文件
-├── .gitignore              # Git忽略文件配置
-├── config.json             # 传统配置文件（可选）
-├── package.json            # NPM项目配置
-├── test-project/           # 测试项目
+├── .env                      # 环境变量配置（包含敏感信息，已git忽略）
+├── .env.example              # 环境变量模板文件
+├── .gitignore                # Git忽略文件配置
+├── package.json              # NPM项目配置
+├── test-project/             # 测试项目
 │   └── package.json
-├── README.md               # 项目说明文档
-├── SETUP.md                # 详细配置指南
-└── task-completion-log.jsonl # 任务日志
+├── README.md                 # 项目说明文档
+└── SETUP.md                  # 详细配置指南
 ```
 
 ## 🛠 安装和配置
@@ -55,19 +54,18 @@ node setup-wizard.js
 
 详细步骤请查看 [SETUP.md](./SETUP.md)
 
-#### 步骤2：验证配置 ✅
+#### 验证配置 ✅
 ```bash
 # 测试完整通知系统
-node notify-system.js --task "测试手环震动提醒"
+pnpm node notify-system.js --task "测试手环震动提醒"
 ```
 
-#### 步骤3：重启Claude Code 🔄
+#### 重启Claude Code 🔄
 重启Claude Code使配置生效，然后正常使用即可！
 
 ### 📋 配置说明
 
-#### 环境变量配置（推荐方式）
-`.env` 文件支持以下配置：
+所有配置通过环境变量管理，编辑 `.env` 文件：
 
 ```bash
 # 飞书Webhook地址
@@ -92,53 +90,18 @@ SOUND_ENABLED=true          # 是否启用声音提醒
 3. 与你的机器人发送一条消息
 4. 访问 `https://api.telegram.org/bot<TOKEN>/getUpdates` 获取 Chat ID
 5. 在 `.env` 文件中配置 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`
-6. 在 `config.json` 中将 `notification.telegram.enabled` 设为 `true`
-
-#### 配置文件方式（可选）
-`config.json` 仍然支持传统配置方式，环境变量会覆盖配置文件设置。
-
-```json
-{
-  "notification": {
-    "feishu": {
-      "enabled": false
-    },
-    "telegram": {
-      "enabled": true
-    },
-    "sound": {
-      "enabled": false
-    }
-  }
-}
-```
 
 ### 🔧 Claude Code Hook配置
 
 在 `~/.claude/settings.json` 中配置hook，任务完成时自动发送通知：
 
-**推荐配置（使用统一通知系统）**：
 ```json
 {
   "hooks": {
     "Stop": [{
       "hooks": [{
         "type": "command",
-        "command": "node /projects/ccdd/notify-system.js --message 'Claude Code任务已完成'"
-      }]
-    }]
-  }
-}
-```
-
-**高级配置（自定义消息）**：
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "node /projects/ccdd/notify-system.js --message '代码优化完成'"
+        "command": "node /path/to/ccdd/notify-system.js --message 'Claude Code任务已完成'"
       }]
     }]
   }
@@ -187,7 +150,7 @@ node notify-sound.js
 ### 测试Claude Code集成
 ```bash
 cd test-project
-npm run test
+pnpm run test
 ```
 
 ## 🔧 技术实现
@@ -212,7 +175,6 @@ npm run test
 - **env-config.js**：环境变量配置管理，统一处理环境变量加载
 - **feishu-notify.js**：飞书API调用模块，支持富文本消息
 - **telegram-notify.js**：Telegram Bot API调用模块，支持HTTP/HTTPS代理
-- **config.json**：传统的配置文件管理（可选）
 
 ### 智能功能
 - 🧠 **项目名称识别**：自动识别当前项目名称（package.json > git仓库名 > 目录名）
@@ -243,24 +205,6 @@ npm run test
 - [ ] 集成更多智能穿戴设备
 - [ ] 开发移动端APP
 - [ ] 支持多AI平台集成
-
-## 🏆 参赛亮点
-
-### 解决的实际问题
-1. **专注度提升**：开发者可以专心做其他事情，不用频繁检查任务状态
-2. **效率优化**：及时获知任务完成，提高工作流程效率
-3. **体验改善**：通过手环震动等私密提醒，不打扰他人
-
-### 技术创新点
-1. **多通道通知**：声音 + 手机推送 + 手环震动的立体提醒体系
-2. **智能集成**：与Claude Code深度集成，自动触发通知
-3. **模块化架构**：高度可扩展，支持多种通知方式
-4. **用户友好**：配置简单，一键启用
-
-### 商业价值
-- **B2C市场**：面向个人开发者的小工具产品
-- **B2B市场**：面向开发团队的协作效率工具
-- **生态价值**：丰富AI编程工具生态，提升用户体验
 
 ## 🎯 完整使用流程
 

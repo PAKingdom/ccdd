@@ -26,28 +26,22 @@
 3. 点击"添加"
 4. 复制生成的Webhook地址（格式：`https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx`）
 
-#### 步骤4：更新配置文件
-编辑 `config.json` 文件：
+#### 步骤4：配置环境变量
+复制 `.env.example` 为 `.env`，然后编辑 `.env` 文件：
 
-```json
-{
-  "notification": {
-    "type": "feishu",
-    "feishu": {
-      "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_ACTUAL_WEBHOOK_URL_HERE",
-      "enabled": true
-    },
-    "sound": {
-      "enabled": true,
-      "backup": true
-    }
-  }
-}
+```bash
+FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/你的实际地址
+NOTIFICATION_ENABLED=true
+SOUND_ENABLED=true
 ```
 
-将 `YOUR_ACTUAL_WEBHOOK_URL_HERE` 替换为你刚才复制的实际webhook地址。
+### 2. 安装依赖
 
-### 2. 测试配置
+```bash
+pnpm install
+```
+
+### 3. 测试配置
 
 运行以下命令测试配置：
 
@@ -62,7 +56,7 @@ node notify-system.js --task "测试任务已完成"
 node feishu-notify.js --webhook "你的webhook地址" --message "测试消息"
 ```
 
-### 3. 验证手环震动
+### 4. 验证手环震动
 
 1. 确保你的小米手环已与手机蓝牙连接
 2. 确保飞书APP有通知权限
@@ -74,35 +68,18 @@ node feishu-notify.js --webhook "你的webhook地址" --message "测试消息"
 ### 只使用声音提醒
 如果你暂时不想配置飞书，可以只使用声音提醒：
 
-```json
-{
-  "notification": {
-    "feishu": {
-      "enabled": false
-    },
-    "sound": {
-      "enabled": true,
-      "backup": true
-    }
-  }
-}
+```bash
+# .env
+SOUND_ENABLED=true
 ```
 
 ### 只使用飞书通知（静音模式）
 如果你不想播放声音：
 
-```json
-{
-  "notification": {
-    "feishu": {
-      "enabled": true,
-      "webhook_url": "你的webhook地址"
-    },
-    "sound": {
-      "enabled": false
-    }
-  }
-}
+```bash
+# .env
+FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/你的地址
+SOUND_ENABLED=false
 ```
 
 ## 🐛 故障排除
@@ -111,7 +88,7 @@ node feishu-notify.js --webhook "你的webhook地址" --message "测试消息"
 1. 检查webhook地址是否正确
 2. 检查网络连接
 3. 查看飞书群组是否收到了消息
-4. 检查config.json文件格式是否正确
+4. 检查 `.env` 文件中 `FEISHU_WEBHOOK_URL` 是否正确配置
 
 ### 手环不震动
 1. 检查手环与手机的蓝牙连接

@@ -20,50 +20,18 @@ class NotificationSystem {
     }
 
     /**
-     * 加载配置文件
+     * 从环境变量加载配置
      */
     loadConfig() {
-        try {
-            const configPath = path.join(__dirname, 'config.json');
-            const configData = fs.readFileSync(configPath, 'utf8');
-            const config = JSON.parse(configData);
-
-            // 从环境变量配置覆盖配置文件
-            const envVars = envConfig.getAllConfig();
-
-            // 飞书配置
-            if (envVars.feishu.webhook_url) {
-                config.notification.feishu.webhook_url = envVars.feishu.webhook_url;
-                config.notification.feishu.enabled = true;
+        const envVars = envConfig.getAllConfig();
+        return {
+            notification: {
+                type: envVars.feishu.enabled ? 'feishu' : 'sound',
+                feishu: envVars.feishu,
+                telegram: envVars.telegram,
+                sound: envVars.sound
             }
-
-            // Telegram配置
-            if (envVars.telegram.enabled) {
-                config.notification.telegram = {
-                    ...config.notification.telegram,
-                    ...envVars.telegram,
-                    enabled: true
-                };
-            }
-
-            // 声音配置
-            if (process.env.SOUND_ENABLED !== undefined) {
-                config.notification.sound.enabled = envVars.sound.enabled;
-            }
-
-            return config;
-        } catch (error) {
-            console.log('⚠️  无法加载配置文件，使用环境变量配置');
-            const envVars = envConfig.getAllConfig();
-            return {
-                notification: {
-                    type: envVars.feishu.enabled ? 'feishu' : 'sound',
-                    feishu: envVars.feishu,
-                    telegram: envVars.telegram,
-                    sound: envVars.sound
-                }
-            };
-        }
+        };
     }
 
     /**
