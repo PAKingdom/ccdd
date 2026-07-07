@@ -51,7 +51,7 @@ class NotificationManager {
         if (this.config.notification.bark && this.config.notification.bark.enabled) {
             notifiers.bark = {
                 enabled: true,
-                notifier: new BarkNotifier(this.config.notification.bark.key, this.config.notification.bark.server),
+                notifier: new BarkNotifier(this.config.notification.bark),
                 send: async (taskInfo) => {
                     const { notifyTaskCompletion } = require('./bark-notify');
                     return await notifyTaskCompletion(taskInfo, this.config.notification.bark, this.projectName);

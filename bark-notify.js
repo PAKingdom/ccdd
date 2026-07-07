@@ -1,76 +1,120 @@
 /**
  * Bark 通知脚本 - iOS 推送提醒版
  * 通过 Bark 服务器（默认 https://api.day.app）推送消息到 iPhone
+ * 扩展能力：自定义图标、时效性/重要警告级别、消息分组、通知历史归档、持续响铃、端到端加密
  */
 
 require('dotenv').config();
 const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
+
+/**
+ * 根据已解析的 Bark 配置构建推送 payload
+ * @param {string} title  标题
+ * @param {string} body   内容
+ * @param {Object} cfg    已按事件解析好的 Bark 配置
+ * @param {string} projectName 项目名（用于消息分组）
+ */
+function buildBarkPayload(title, body, cfg = {}, projectName = '') {
+    // critical(重要警告) 优先级高于普通 level
+    const level = cfg.critical ? 'critical' : (cfg.level || 'active');
+    const payload = { title, body, level };
+
+    if (cfg.icon) payload.icon = cfg.icon;                       // 自定义图标
+    if (level === 'critical') {                                  // 重要警告音量 0~10
+        const v = cfg.criticalVolume;
+        payload.volume = (v === undefined || v === null || Number.isNaN(v)) ? 5 : v;
+    }
+    if (cfg.groupEnabled && projectName) payload.group = projectName; // 消息分组=项目名
+    if (cfg.isArchive === '1' || cfg.isArchive === '0') payload.isArchive = cfg.isArchive; // 归档
+    if (cfg.call) payload.call = '1';                            // 持续响铃(~30s)
+
+    return payload;
+}
+
+/**
+ * AES 加密 payload（Bark 端到端加密，服务器只转发密文）
+ * 密钥长度决定 AES-128/192/256；需与 Bark App「推送加密」里的算法/密钥一致
+ * @returns {{ciphertext:string, iv:(string|null)}}
+ */
+function encryptPayload(plaintext, key, mode = 'CBC', fixedIv = '') {
+    const keyBuf = Buffer.from(key, 'utf8');
+    const bits = keyBuf.length * 8;
+    if (![128, 192, 256].includes(bits)) {
+        throw new Error(`BARK_ENCRYPT_KEY 长度必须是 16/24/32 字符，当前 ${keyBuf.length} 字符`);
+    }
+    const m = (mode || 'CBC').toUpperCase();
+    if (m === 'CBC') {
+        // 固定 IV(BARK_ENCRYPT_IV) 优先，否则每次随机生成；两种都会放进 iv 参数一起发
+        const iv = fixedIv || crypto.randomBytes(8).toString('hex'); // 16 个 ASCII 字符
+        if (Buffer.byteLength(iv, 'utf8') !== 16) {
+            throw new Error(`BARK_ENCRYPT_IV 必须是 16 字符，当前 ${Buffer.byteLength(iv, 'utf8')} 字符`);
+        }
+        const cipher = crypto.createCipheriv(`aes-${bits}-cbc`, keyBuf, Buffer.from(iv, 'utf8'));
+        let ct = cipher.update(plaintext, 'utf8', 'base64');
+        ct += cipher.final('base64');
+        return { ciphertext: ct, iv };
+    }
+    if (m === 'ECB') {
+        const cipher = crypto.createCipheriv(`aes-${bits}-ecb`, keyBuf, null);
+        let ct = cipher.update(plaintext, 'utf8', 'base64');
+        ct += cipher.final('base64');
+        return { ciphertext: ct, iv: null };
+    }
+    throw new Error(`暂不支持的加密模式: ${m}（本脚本支持 CBC / ECB）`);
+}
 
 /**
  * Bark 推送通知类
  */
 class BarkNotifier {
     /**
-     * 构造函数
-     * @param {string} deviceKey - Bark 设备 key（App 首页复制）
-     * @param {string} server - Bark 服务器地址，默认 https://api.day.app
+     * @param {Object} cfg 已解析的 Bark 配置（含 key/server/encryptKey 等）
      */
-    constructor(deviceKey, server = 'https://api.day.app') {
-        this.deviceKey = deviceKey;
-        // 去掉结尾斜杠，避免拼出双斜杠
-        this.server = (server || 'https://api.day.app').replace(/\/+$/, '');
+    constructor(cfg = {}) {
+        this.cfg = cfg || {};
+        this.deviceKey = this.cfg.key || '';
+        this.server = (this.cfg.server || 'https://api.day.app').replace(/\/+$/, '');
     }
 
     /**
-     * 发送推送到 Bark
-     * @param {string} title - 通知标题
-     * @param {string} body - 通知内容
-     * @param {Object} options - 额外选项（group / sound / icon / level 等）
-     * @returns {Promise<boolean>} 发送是否成功
+     * 发送 payload（配置了 encryptKey 则自动加密）
+     * @returns {Promise<boolean>}
      */
-    async send(title, body, options = {}) {
-        const payload = {
-            title: title,
-            body: body,
-            group: 'Claude Code',
-            ...options
-        };
-
-        return this._sendPayload(payload);
+    async send(payload) {
+        if (this.cfg.encryptKey) {
+            const { ciphertext, iv } = encryptPayload(
+                JSON.stringify(payload), this.cfg.encryptKey, this.cfg.encryptMode, this.cfg.encryptIv
+            );
+            let form = 'ciphertext=' + encodeURIComponent(ciphertext);
+            if (iv) form += '&iv=' + encodeURIComponent(iv);
+            return this._request(form, 'application/x-www-form-urlencoded');
+        }
+        return this._request(JSON.stringify(payload), 'application/json; charset=utf-8');
     }
 
     /**
-     * 发送 HTTP 请求到 Bark 服务器
-     * POST ${server}/${deviceKey}  body: {title, body, ...}
-     * @param {Object} payload - 请求载荷
-     * @returns {Promise<boolean>} 发送是否成功
+     * 发送 HTTP 请求到 Bark：POST ${server}/${deviceKey}
      */
-    _sendPayload(payload) {
+    _request(data, contentType) {
         return new Promise((resolve) => {
-            const data = JSON.stringify(payload);
             const url = new URL(`${this.server}/${this.deviceKey}`);
-
             const options = {
                 hostname: url.hostname,
                 port: url.port || (url.protocol === 'https:' ? 443 : 80),
                 path: url.pathname + url.search,
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json; charset=utf-8',
+                    'Content-Type': contentType,
                     'Content-Length': Buffer.byteLength(data)
                 }
             };
-
             const protocol = url.protocol === 'https:' ? https : http;
 
             const req = protocol.request(options, (res) => {
                 let responseData = '';
-
-                res.on('data', (chunk) => {
-                    responseData += chunk;
-                });
-
+                res.on('data', (chunk) => { responseData += chunk; });
                 res.on('end', () => {
                     try {
                         const result = JSON.parse(responseData);
@@ -101,10 +145,10 @@ class BarkNotifier {
 
 /**
  * 任务完成通知函数
- * @param {string} taskInfo - 任务信息
- * @param {Object} barkConfig - Bark 配置 { key, server }
- * @param {string} projectName - 项目名称
- * @returns {Promise<boolean>} 发送是否成功
+ * @param {string} taskInfo   任务信息
+ * @param {Object} barkConfig 已按事件解析的 Bark 配置 { key, server, icon, level, ... }
+ * @param {string} projectName 项目名称
+ * @returns {Promise<boolean>}
  */
 async function notifyTaskCompletion(taskInfo = 'Claude Code任务已完成', barkConfig = {}, projectName = '') {
     const deviceKey = barkConfig.key || process.env.BARK_KEY || '';
@@ -112,28 +156,25 @@ async function notifyTaskCompletion(taskInfo = 'Claude Code任务已完成', bar
 
     if (!deviceKey || deviceKey.includes('your_bark_device_key_here')) {
         console.log('⚠️  请先配置 Bark 设备 key');
-        console.log('📝 配置方法：');
-        console.log('1. 安装 Bark App（iOS）');
-        console.log('2. 打开 App 首页，复制「设备 key」（如 https://api.day.app/AbCd1234.../ 里的 AbCd1234...）');
-        console.log('3. 在 .env 中设置 BARK_KEY');
+        console.log('📝 打开 Bark App 首页复制「设备 key」，在 .env 中设置 BARK_KEY');
         return false;
     }
 
-    const notifier = new BarkNotifier(deviceKey, server);
+    const cfg = { ...barkConfig, key: deviceKey, server };
+    const notifier = new BarkNotifier(cfg);
 
-    const title = projectName ? `${projectName}` : 'Claude Code';
+    const title = projectName || 'Claude Code';
     const body = `${taskInfo}\n${new Date().toLocaleString('zh-CN')}`;
+    const payload = buildBarkPayload(title, body, cfg, projectName);
 
     try {
-        const success = await notifier.send(title, body);
-
+        const success = await notifier.send(payload);
         if (success) {
             console.log('🎉 任务完成通知已推送到 Bark！');
             console.log('📱 您的 iPhone 将收到推送通知');
         } else {
-            console.log('❌ Bark 通知发送失败，请检查 BARK_KEY / BARK_SERVER 配置');
+            console.log('❌ Bark 通知发送失败，请检查 BARK_KEY / BARK_SERVER / 加密配置');
         }
-
         return success;
     } catch (error) {
         console.error('❌ 发送 Bark 通知时发生错误:', error.message);
@@ -147,30 +188,35 @@ async function notifyTaskCompletion(taskInfo = 'Claude Code任务已完成', bar
 function getCommandLineArgs() {
     const args = process.argv.slice(2);
     const options = {};
-
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith('--')) {
             const key = arg.slice(2);
             const value = args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : true;
             options[key] = value;
-            if (value !== true) i++; // 跳过下一个参数，因为它已经被当作值处理了
+            if (value !== true) i++;
         }
     }
-
     return options;
 }
 
-// 如果直接运行此脚本
+// 如果直接运行此脚本（按 Stop 事件的默认策略解析扩展项）
 if (require.main === module) {
     const options = getCommandLineArgs();
     const taskInfo = options.message || options.task || 'Claude Code任务已完成';
+    const { envConfig } = require('./env-config');
+    const bark = envConfig.getBarkConfig();
+    bark.isArchive = bark.archiveStop ? '1' : '0';
+    bark.critical = (bark.criticalScope === 'all' || bark.criticalScope === 'stop');
+    bark.call = (bark.callScope === 'all' || bark.callScope === 'stop');
 
     console.log('🚀 开始发送 Bark 通知...');
-    notifyTaskCompletion(taskInfo, {}, options.project || '');
+    notifyTaskCompletion(taskInfo, bark, options.project || '');
 }
 
 module.exports = {
     BarkNotifier,
+    buildBarkPayload,
+    encryptPayload,
     notifyTaskCompletion
 };

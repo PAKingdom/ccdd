@@ -26,18 +26,35 @@ class NotificationSystem {
     loadConfig() {
         const envVars = envConfig.getAllConfig();
         const sound = { ...envVars.sound };
-        // 命令行 --sound 覆盖 .env 的 SOUND_FILE（可给不同 hook 配不同音效）
+        // 音效优先级：--sound 显式路径 > ask 事件用 SOUND_FILE_ASK > 默认 SOUND_FILE
         if (typeof this.options.sound === 'string' && this.options.sound) {
             sound.file = this.options.sound;
+        } else if (this.options.ask && envVars.sound.fileAsk) {
+            sound.file = envVars.sound.fileAsk;
         }
         return {
             notification: {
                 type: envVars.feishu.enabled ? 'feishu' : 'sound',
                 feishu: envVars.feishu,
                 telegram: envVars.telegram,
-                bark: envVars.bark,
+                bark: this.resolveBark(envVars.bark),
                 sound: sound
             }
+        };
+    }
+
+    /**
+     * 按当前事件(ask / stop)解析 Bark 的按事件差异项：
+     * 归档(isArchive)、重要警告(critical)、持续响铃(call)
+     */
+    resolveBark(bark) {
+        const eventKey = this.options.ask ? 'ask' : 'stop';
+        const inScope = (scope) => scope === 'all' || scope === eventKey;
+        return {
+            ...bark,
+            isArchive: (eventKey === 'stop' ? bark.archiveStop : bark.archiveAsk) ? '1' : '0',
+            critical: inScope(bark.criticalScope),
+            call: inScope(bark.callScope)
         };
     }
 
@@ -100,14 +117,16 @@ class NotificationSystem {
             psScript = `try { (New-Object Media.SoundPlayer '${safePath}').PlaySync() } catch { [console]::Beep(800, 300) }`;
         } else {
             // .mp3/.m4a/.wma 等：用 MediaPlayer 播放（等到时长可读后播完再退出）
+            // MediaPlayer.Open 是异步的，文件缺失/损坏不会抛异常，故：先 Test-Path 兜底，
+            // 且时长始终读不到时也蜂鸣兜底，避免静默失败（无声也无 beep）
             psScript = `try {` +
+                ` if (-not (Test-Path -LiteralPath '${safePath}')) { [console]::Beep(800, 300) } else {` +
                 ` Add-Type -AssemblyName PresentationCore;` +
                 ` $p = New-Object System.Windows.Media.MediaPlayer;` +
                 ` $p.Open([uri]::new('${safePath}'));` +
                 ` $t = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $t -lt 50) { Start-Sleep -Milliseconds 100; $t++ };` +
-                ` $p.Play();` +
-                ` if ($p.NaturalDuration.HasTimeSpan) { Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) } else { Start-Sleep -Seconds 3 };` +
-                ` $p.Close()` +
+                ` if ($p.NaturalDuration.HasTimeSpan) { $p.Play(); Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) } else { [console]::Beep(800, 300) };` +
+                ` $p.Close() }` +
                 ` } catch { [console]::Beep(800, 300) }`;
         }
 
@@ -251,31 +270,53 @@ function readStdinSync() {
 }
 
 /**
+ * 读取并解析 stdin 里的 Claude hook 上下文（只能读一次，故集中解析）
+ * @returns {Object} 解析后的上下文对象；非 JSON 或无输入时返回 {}
+ */
+function readStdinContext() {
+    const raw = readStdinSync();
+    if (!raw) return {};
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
+}
+
+/**
+ * 判断是否为「Claude 在等你」类事件(Notification hook)
+ * 依次看：命令行 --event ask > stdin hook_event_name > stdin 含 message 字段的启发式
+ */
+function isAskEvent(options, ctx) {
+    if (options.event === 'ask') return true;
+    if (ctx && ctx.hook_event_name === 'Notification') return true;
+    if (ctx && typeof ctx.message === 'string' && !ctx.last_assistant_message) return true;
+    return false;
+}
+
+/**
  * 从 Claude 上下文生成通知消息
  */
-function buildMessageFromContext(options) {
+function buildMessageFromContext(options, ctx, ask) {
     // 1. 命令行显式指定了消息，直接用
     if (options.message || options.task) {
         return options.message || options.task;
     }
 
-    // 2. 尝试从 stdin 读取 Claude Stop hook 的 JSON 上下文
-    const stdin = readStdinSync();
-    if (stdin) {
-        try {
-            const ctx = JSON.parse(stdin);
-            if (ctx.last_assistant_message) {
-                const text = ctx.last_assistant_message
-                    .split('\n')
-                    .filter(line => line.trim() && !line.startsWith('#'))
-                    .slice(0, 5)
-                    .join(' ')
-                    .slice(0, 4000);
-                return text || '任务完成';
-            }
-        } catch {
-            // stdin 不是 JSON，忽略
-        }
+    // 2. Notification(等你)事件：用 stdin 的 message，退回默认提示
+    if (ask) {
+        return (ctx && ctx.message) || '⏳ Claude 在等你回复 / 授权';
+    }
+
+    // 3. Stop：尝试从上下文提取最后一条助手消息
+    if (ctx && ctx.last_assistant_message) {
+        const text = ctx.last_assistant_message
+            .split('\n')
+            .filter(line => line.trim() && !line.startsWith('#'))
+            .slice(0, 5)
+            .join(' ')
+            .slice(0, 4000);
+        return text || '任务完成';
     }
 
     return '任务完成';
@@ -284,7 +325,12 @@ function buildMessageFromContext(options) {
 // 如果直接运行此脚本
 if (require.main === module) {
     const options = getCommandLineArgs();
-    const taskInfo = buildMessageFromContext(options);
+    // 只在 stdin 被管道输入时读取（hook 会传 JSON）；交互式终端(TTY)下不读，
+    // 否则 readFileSync(0) 会阻塞等 EOF，导致 `notify-system.js --task "测试"` 卡死
+    const ctx = process.stdin.isTTY ? {} : readStdinContext();
+    const ask = isAskEvent(options, ctx);
+    options.ask = ask; // 供 loadConfig 选择 SOUND_FILE_ASK
+    const taskInfo = buildMessageFromContext(options, ctx, ask);
 
     const notifier = new NotificationSystem(options);
     notifier.sendAllNotifications(taskInfo);
