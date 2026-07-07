@@ -78,6 +78,7 @@ class EnvConfig {
     getSoundConfig() {
         return {
             enabled: process.env.SOUND_ENABLED !== 'false',
+            file: process.env.SOUND_FILE || '',
             backup: true
         };
     }

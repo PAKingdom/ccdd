@@ -13,7 +13,8 @@ const { NotificationManager } = require('./notification-manager');
  * 通知系统管理器
  */
 class NotificationSystem {
-    constructor() {
+    constructor(options = {}) {
+        this.options = options || {};
         this.config = this.loadConfig();
         this.projectName = this.getProjectName();
         this.notificationManager = new NotificationManager(this.config, this.projectName);
@@ -24,13 +25,18 @@ class NotificationSystem {
      */
     loadConfig() {
         const envVars = envConfig.getAllConfig();
+        const sound = { ...envVars.sound };
+        // 命令行 --sound 覆盖 .env 的 SOUND_FILE（可给不同 hook 配不同音效）
+        if (typeof this.options.sound === 'string' && this.options.sound) {
+            sound.file = this.options.sound;
+        }
         return {
             notification: {
                 type: envVars.feishu.enabled ? 'feishu' : 'sound',
                 feishu: envVars.feishu,
                 telegram: envVars.telegram,
                 bark: envVars.bark,
-                sound: envVars.sound
+                sound: sound
             }
         };
     }
@@ -83,11 +89,33 @@ class NotificationSystem {
      * 播放Windows系统声音
      */
     playWindowsSound() {
-        const psScript = `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("任务完成，已发送手机通知"); [console]::Beep(800, 300)`;
+        // SOUND_FILE 未配置时用默认 Windows 通知音
+        const defaultSound = 'C:\\Windows\\Media\\Windows Notify System Generic.wav';
+        const soundFile = this.config.notification.sound.file || defaultSound;
+        const safePath = soundFile.replace(/'/g, "''"); // 转义 PowerShell 单引号
 
-        return spawn('powershell', ['-Command', psScript], {
+        let psScript;
+        if (/\.wav$/i.test(soundFile)) {
+            // .wav：SoundPlayer 同步播放，快且稳
+            psScript = `try { (New-Object Media.SoundPlayer '${safePath}').PlaySync() } catch { [console]::Beep(800, 300) }`;
+        } else {
+            // .mp3/.m4a/.wma 等：用 MediaPlayer 播放（等到时长可读后播完再退出）
+            psScript = `try {` +
+                ` Add-Type -AssemblyName PresentationCore;` +
+                ` $p = New-Object System.Windows.Media.MediaPlayer;` +
+                ` $p.Open([uri]::new('${safePath}'));` +
+                ` $t = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $t -lt 50) { Start-Sleep -Milliseconds 100; $t++ };` +
+                ` $p.Play();` +
+                ` if ($p.NaturalDuration.HasTimeSpan) { Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) } else { Start-Sleep -Seconds 3 };` +
+                ` $p.Close()` +
+                ` } catch { [console]::Beep(800, 300) }`;
+        }
+
+        return spawn('powershell', ['-NoProfile', '-Command', psScript], {
             stdio: 'ignore',
-            shell: false
+            shell: false,
+            detached: true,   // 让音效在本进程退出后也能播完（长音频不被打断）
+            windowsHide: true  // 不闪黑窗
         });
     }
 
@@ -96,9 +124,10 @@ class NotificationSystem {
      */
     playBeep() {
         const psScript = '[console]::Beep(800, 500)';
-        return spawn('powershell', ['-Command', psScript], {
+        return spawn('powershell', ['-NoProfile', '-Command', psScript], {
             stdio: 'ignore',
-            shell: false
+            shell: false,
+            windowsHide: true
         });
     }
 
@@ -257,7 +286,7 @@ if (require.main === module) {
     const options = getCommandLineArgs();
     const taskInfo = buildMessageFromContext(options);
 
-    const notifier = new NotificationSystem();
+    const notifier = new NotificationSystem(options);
     notifier.sendAllNotifications(taskInfo);
 }
 

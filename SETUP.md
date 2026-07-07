@@ -40,6 +40,16 @@ BARK_SERVER=https://api.day.app
 
 默认开启，仅支持 Windows。不需要的话设 `SOUND_ENABLED=false`。
 
+想换音效：在 `.env` 里设 `SOUND_FILE`，留空则用默认 Windows 通知音。**支持 `.wav` 和 `.mp3`**（`.wav` 走 SoundPlayer，`.mp3`/`.m4a`/`.wma` 走 MediaPlayer）。系统自带音效在 `C:\Windows\Media\`，例如：
+
+```bash
+SOUND_FILE=C:\Windows\Media\tada.wav      # 欢快的“ta-da”
+SOUND_FILE=C:\Windows\Media\chimes.wav    # 清脆风铃
+SOUND_FILE=C:\Users\你\Music\alert.mp3    # 你自己的 mp3
+```
+
+也可以填任意 wav/mp3 文件路径（建议短音效，1~3 秒）。（原来的机器人语音已换成音效播放。）
+
 ## 故障排除
 
 - 飞书收不到：检查 webhook 地址是否完整复制了
