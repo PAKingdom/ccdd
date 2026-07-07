@@ -24,6 +24,18 @@ TELEGRAM_CHAT_ID=你的chat_id
 
 需要代理的话加一行 `HTTPS_PROXY=http://127.0.0.1:7890`。
 
+## Bark 通知配置（iOS）
+
+1. iPhone 安装 Bark App，打开首页复制「设备 key」（如 `https://api.day.app/AbCd1234.../` 里的 `AbCd1234...`）
+2. 填入 `.env`：
+
+```bash
+BARK_KEY=你的设备key
+BARK_SERVER=https://api.day.app
+```
+
+`BARK_SERVER` 默认官方服务器，自建 Bark 服务器时才需要改。测试：`node notify-system.js --task "测试"`。
+
 ## 声音提醒
 
 默认开启，仅支持 Windows。不需要的话设 `SOUND_ENABLED=false`。

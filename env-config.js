@@ -61,6 +61,18 @@ class EnvConfig {
     }
 
     /**
+     * 获取 Bark 配置
+     */
+    getBarkConfig() {
+        const key = process.env.BARK_KEY || '';
+        return {
+            server: process.env.BARK_SERVER || 'https://api.day.app',
+            key: key,
+            enabled: !!key && !key.includes('your_bark_device_key_here')
+        };
+    }
+
+    /**
      * 获取声音通知配置
      */
     getSoundConfig() {
@@ -86,6 +98,7 @@ class EnvConfig {
         return {
             feishu: this.getFeishuConfig(),
             telegram: this.getTelegramConfig(),
+            bark: this.getBarkConfig(),
             sound: this.getSoundConfig(),
             notification: this.getNotificationConfig()
         };
