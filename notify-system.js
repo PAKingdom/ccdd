@@ -5,7 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawnSync } = require('child_process');
 const { envConfig } = require('./env-config');
 const { NotificationManager } = require('./notification-manager');
 
@@ -110,84 +110,54 @@ class NotificationSystem {
     /**
      * 播放Windows系统声音
      */
-    playWindowsSound() {
+    buildSoundPsScript() {
         // SOUND_FILE 未配置时用默认 Windows 通知音
         const defaultSound = 'C:\\Windows\\Media\\Windows Notify System Generic.wav';
         const soundFile = this.config.notification.sound.file || defaultSound;
         const safePath = soundFile.replace(/'/g, "''"); // 转义 PowerShell 单引号
 
-        let psScript;
         if (/\.wav$/i.test(soundFile)) {
             // .wav：SoundPlayer 同步播放，快且稳
-            psScript = `try { (New-Object Media.SoundPlayer '${safePath}').PlaySync() } catch { [console]::Beep(800, 300) }`;
-        } else {
-            // .mp3/.m4a/.wma 等：用 MediaPlayer 播放（等到时长可读后播完再退出）
-            // MediaPlayer.Open 是异步的，文件缺失/损坏不会抛异常，故：先 Test-Path 兜底，
-            // 且时长始终读不到时也蜂鸣兜底，避免静默失败（无声也无 beep）
-            psScript = `try {` +
-                ` if (-not (Test-Path -LiteralPath '${safePath}')) { [console]::Beep(800, 300) } else {` +
-                ` Add-Type -AssemblyName PresentationCore;` +
-                ` $p = New-Object System.Windows.Media.MediaPlayer;` +
-                ` $p.Open([uri]::new('${safePath}'));` +
-                ` $t = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $t -lt 50) { Start-Sleep -Milliseconds 100; $t++ };` +
-                ` if ($p.NaturalDuration.HasTimeSpan) { $p.Play(); Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) } else { [console]::Beep(800, 300) };` +
-                ` $p.Close() }` +
-                ` } catch { [console]::Beep(800, 300) }`;
+            return `try { (New-Object Media.SoundPlayer '${safePath}').PlaySync() } catch { [console]::Beep(800, 300) }`;
         }
-
-        return spawn(POWERSHELL, ['-NoProfile', '-Command', psScript], {
-            stdio: 'ignore',
-            shell: false,
-            detached: true,   // 让音效在本进程退出后也能播完（长音频不被打断）
-            windowsHide: true  // 不闪黑窗
-        });
-    }
-
-    /**
-     * 播放蜂鸣声作为备用方案
-     */
-    playBeep() {
-        const psScript = '[console]::Beep(800, 500)';
-        return spawn(POWERSHELL, ['-NoProfile', '-Command', psScript], {
-            stdio: 'ignore',
-            shell: false,
-            windowsHide: true
-        });
+        // .mp3/.m4a/.wma 等：用 MediaPlayer 播放（等到时长可读后播完再退出）
+        // MediaPlayer.Open 是异步的，文件缺失/损坏不会抛异常，故：先 Test-Path 兜底，
+        // 且时长始终读不到时也蜂鸣兜底，避免静默失败（无声也无 beep）
+        return `try {` +
+            ` if (-not (Test-Path -LiteralPath '${safePath}')) { [console]::Beep(800, 300) } else {` +
+            ` Add-Type -AssemblyName PresentationCore;` +
+            ` $p = New-Object System.Windows.Media.MediaPlayer;` +
+            ` $p.Open([uri]::new('${safePath}'));` +
+            ` $t = 0; while (-not $p.NaturalDuration.HasTimeSpan -and $t -lt 50) { Start-Sleep -Milliseconds 100; $t++ };` +
+            ` if ($p.NaturalDuration.HasTimeSpan) { $p.Play(); Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) } else { [console]::Beep(800, 300) };` +
+            ` $p.Close() }` +
+            ` } catch { [console]::Beep(800, 300) }`;
     }
 
     /**
      * 发送声音提醒
      */
-    async sendSoundNotification() {
+    sendSoundNotification() {
         if (!this.config.notification.sound.enabled) {
             return;
         }
 
         console.log('🔊 播放声音提醒...');
 
-        try {
-            const soundProcess = this.playWindowsSound();
+        // 同步阻塞播放：保证在 hook 进程存活期间就把声音播完，
+        // 不依赖 detached 子进程在本进程退出后存活（那样会被 hook 进程树回收而静默）
+        const psScript = this.buildSoundPsScript();
+        const r = spawnSync(POWERSHELL, ['-NoProfile', '-Command', psScript], {
+            stdio: 'ignore', shell: false, windowsHide: true, timeout: 20000
+        });
 
-            soundProcess.on('error', (error) => {
-                if (this.config.notification.sound.backup) {
-                    console.log('声音播放失败，使用蜂鸣声');
-                    this.playBeep();
-                }
-            });
-
-            soundProcess.on('close', (code) => {
-                if (code !== 0 && this.config.notification.sound.backup) {
-                    console.log('声音播放异常，使用蜂鸣声');
-                    this.playBeep();
-                }
-            });
-
-        } catch (error) {
-            if (this.config.notification.sound.backup) {
-                console.log('播放声音时发生错误，使用蜂鸣声');
-                this.playBeep();
-            }
+        // powershell 找不到等异常时退回蜂鸣
+        if (r.error && this.config.notification.sound.backup) {
+            spawnSync(POWERSHELL, ['-NoProfile', '-Command', '[console]::Beep(800,500)'],
+                { stdio: 'ignore', shell: false, windowsHide: true, timeout: 5000 });
+            console.log('声音播放失败，已尝试蜂鸣');
         }
+        console.log('🔊 声音提醒已播放');
     }
 
     /**
@@ -222,22 +192,17 @@ class NotificationSystem {
         // 发送所有通知
         const results = await this.notificationManager.sendAllNotifications(taskInfo);
 
-        // 添加声音通知
+        // 声音通知：同步阻塞，播完再继续（不依赖 detached 子进程在本进程退出后存活）
         if (this.config.notification.sound.enabled) {
             this.sendSoundNotification();
-            setTimeout(() => {
-                console.log('🔊 声音提醒已播放');
-            }, 1000);
         }
 
         // 打印结果汇总
         this.notificationManager.printNotificationSummary(results);
 
-        // 3秒后退出
-        setTimeout(() => {
-            console.log('✨ 通知系统执行完成，程序退出');
-            process.exit(0);
-        }, 3000);
+        // 声音已同步播完，直接退出
+        console.log('✨ 通知系统执行完成，程序退出');
+        process.exit(0);
     }
 }
 
