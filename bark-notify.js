@@ -22,6 +22,7 @@ function buildBarkPayload(title, body, cfg = {}, projectName = '') {
     const payload = { title, body, level };
 
     if (cfg.icon) payload.icon = cfg.icon;                       // 自定义图标
+    if (cfg.sound) payload.sound = cfg.sound;                    // 推送铃声(iOS 预置/自定义音效名)
     if (level === 'critical') {                                  // 重要警告音量 0~10
         const v = cfg.criticalVolume;
         payload.volume = (v === undefined || v === null || Number.isNaN(v)) ? 5 : v;

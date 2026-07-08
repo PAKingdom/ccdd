@@ -71,6 +71,8 @@ class EnvConfig {
             enabled: !!key && !key.includes('your_bark_device_key_here'),
             // 自定义图标（默认 Claude 图标）
             icon: process.env.BARK_ICON || 'https://claude.ai/apple-touch-icon.png',
+            // 推送铃声（iOS 预置音效名或 App 里导入的自定义音效名）；留空=Bark 默认
+            sound: process.env.BARK_SOUND || '',
             // 通知级别：active / timeSensitive(时效性) / passive
             level: process.env.BARK_LEVEL || 'timeSensitive',
             // 消息分组（默认启用，用项目名分组）

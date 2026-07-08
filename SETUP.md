@@ -43,6 +43,7 @@ BARK_SERVER=https://api.day.app
 | 变量 | 作用 | 默认 |
 |------|------|------|
 | `BARK_ICON` | 通知图标 URL | Claude 图标 |
+| `BARK_SOUND` | iPhone 铃声：iOS 预置音效名或 App 导入的自定义音效名（预置名列表见 `.env.example`） | 空=Bark 默认 |
 | `BARK_LEVEL` | `active`/`timeSensitive`(时效性)/`passive` | `timeSensitive` |
 | `BARK_GROUP_ENABLED` | 用项目名分组 | `true` |
 | `BARK_ARCHIVE_STOP` / `BARK_ARCHIVE_ASK` | 存进通知历史 | Stop 存 / ask 不存 |
