@@ -9,6 +9,11 @@ const { spawn } = require('child_process');
 const { envConfig } = require('./env-config');
 const { NotificationManager } = require('./notification-manager');
 
+// hook 运行环境的 PATH 可能不含 System32，直接 spawn('powershell') 会 ENOENT，
+// 导致「bark 能收到但 Windows 没声音」。故用绝对路径定位 powershell.exe。
+const POWERSHELL = path.join(process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
 /**
  * 通知系统管理器
  */
@@ -130,7 +135,7 @@ class NotificationSystem {
                 ` } catch { [console]::Beep(800, 300) }`;
         }
 
-        return spawn('powershell', ['-NoProfile', '-Command', psScript], {
+        return spawn(POWERSHELL, ['-NoProfile', '-Command', psScript], {
             stdio: 'ignore',
             shell: false,
             detached: true,   // 让音效在本进程退出后也能播完（长音频不被打断）
@@ -143,7 +148,7 @@ class NotificationSystem {
      */
     playBeep() {
         const psScript = '[console]::Beep(800, 500)';
-        return spawn('powershell', ['-NoProfile', '-Command', psScript], {
+        return spawn(POWERSHELL, ['-NoProfile', '-Command', psScript], {
             stdio: 'ignore',
             shell: false,
             windowsHide: true
